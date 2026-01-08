@@ -9,40 +9,78 @@ import google.generativeai as genai
 from datetime import datetime
 import urllib.parse 
 from openpyxl import Workbook, load_workbook
-from dotenv import load_dotenv # NUOVO: Import necessaria per la sicurezza
+from dotenv import load_dotenv # [NUOVO] Importa per leggere .env
+import traceback # [NUOVO] Importa per gestire gli errori
 
-# Carica le variabili d'ambiente dal file .env (deve essere nella stessa cartella)
+# Carica le variabili d'ambiente all'avvio
 load_dotenv() 
 
-# --- CONFIGURAZIONE ---
-# ⚠️ 1. TOKEN TELEGRAM (RECUPERATO DA .env - NON PIÙ HARDCODED)
-API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+# --- CONFIGURAZIONE (Legge tutto da .env) ---
+# ⚠️ 1. TOKEN TELEGRAM - ORA LETTO DA .env
+API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') 
 
-# ⚠️ 2. CHIAVE GOOGLE (RECUPERATA DA .env - NON PIÙ HARDCODED)
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
+# ⚠️ 2. CHIAVE GOOGLE - ORA LETTA DA .env
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY') 
 
-# ⚠️ 3. CANALE
+# ⚠️ 3. CHAT ID per NOTIFICHE CRITICHE - ORA LETTO DA .env
+FABRIZIO_CHAT_ID = os.getenv('FABRIZIO_CHAT_ID') # Useremo questo per il logging
+
+# 4. ALTRE CONFIGURAZIONI (Invariate)
 CHANNEL_ID = '@citazioneradar' 
-
 AMAZON_TAG = 'radartest-21' 
 DB_FILE = "Registro_Vendite.xlsx"
 FONT_NAME = "Montserrat-Bold.ttf"
-
-# Link Disclaimer
 LINK_INFO_POST = "https://t.me/citazioneradar/178" 
 
 # --- CONFIGURAZIONE IA ---
 try:
-    genai.configure(api_key=GOOGLE_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    if GOOGLE_API_KEY:
+        genai.configure(api_key=GOOGLE_API_KEY)
+        model = genai.GenerativeModel('gemini-1.5-flash')
+    else:
+        print("⚠️ Chiave GOOGLE_API_KEY mancante. Le emoji IA non funzioneranno.")
+        model = None
 except Exception as e:
     print(f"Errore configurazione Gemini: {e}")
     model = None
+
+# Verifica TOKEN
+if not API_TOKEN:
+    raise ValueError("❌ ERRORE CRITICO: TELEGRAM_BOT_TOKEN non trovato nel file .env.")
 
 bot = telebot.TeleBot(API_TOKEN)
 user_data = {} # Dizionario per memorizzare i dati temporanei dell'utente
 
 print("✅ ProfitBot Definitivo AVVIATO!")
+
+# --- NUOVA FUNZIONE: GESTIONE ERRORI CRITICI ---
+def handle_critical_error(e):
+    """Cattura, formatta e invia il traceback dell'errore al chat ID di Fabrizio."""
+    error_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    error_traceback = traceback.format_exc()
+    
+    # Messaggio di errore formattato per Telegram
+    message = (
+        f"🚨 **ERRORE CRITICO in ProfitBot!** 🚨\n"
+        f"⏰ Data/Ora: `{error_time}`\n"
+        f"🐞 Tipo Errore: `{type(e).__name__}`\n"
+        f"💬 Messaggio: `{str(e)}`\n\n"
+        f"--- TRACEBACK ---\n"
+        f"```\n"
+        f"{error_traceback[:1000]}..." # Limita la lunghezza
+        f"```"
+    )
+    
+    # Tentativo di invio della notifica (solo se FABRIZIO_CHAT_ID è impostato)
+    if FABRIZIO_CHAT_ID:
+        try:
+            bot.send_message(FABRIZIO_CHAT_ID, message, parse_mode='Markdown')
+        except Exception as notify_e:
+            print(f"Impossibile inviare la notifica a {FABRIZIO_CHAT_ID}: {notify_e}")
+    
+    print(message) # Stampa anche nella console per debug
+# --- FINE FUNZIONE ERRORE ---
+
 
 # --- DATABASE (Invariato) ---
 def inizializza_db():
@@ -94,9 +132,9 @@ def salva_in_excel(dati):
     except Exception as e:
         print(f"Errore salvataggio Excel: {e}")
         return False
-inizializza_db()
+#inizializza_db() # Lo spostiamo nel main loop
 
-# --- CLEANER E UTILITY ---
+# --- CLEANER E UTILITY (Invariato) ---
 def clean_input_price(text):
     text = text.replace('€', '').replace('EUR', '').strip()
     return text
@@ -155,7 +193,7 @@ def escape_markdown(text):
     return text
 
 
-# --- IA E EMOJI ---
+# --- IA E EMOJI (Invariato nella logica, usa le chiavi da os.getenv) ---
 
 # 🛑 MODIFICATA: Rimosso l'uso dell'IA e il troncamento forzato. Restituisce il titolo quasi integralmente.
 def rewrite_with_ai(testo_grezzo):
@@ -169,9 +207,6 @@ def rewrite_with_ai(testo_grezzo):
         testo = testo[:-3].strip()
     return testo
         
-# 🛑 FUNZIONE RIMOSSA: Non usiamo più il riassunto IA per la descrizione.
-# def summarize_description_ia(testo_grezzo): ...
-
 def get_emoji_from_ia(titolo):
     if not titolo: return "📦"
     
@@ -434,7 +469,7 @@ def crea_collage_riassunto():
     bio.seek(0)
     return bio
 
-# --- MENU e GESTORE CALLBACK (Aggiunto Rapida, Rimosso Logica IA) ---
+# --- MENU e GESTORE CALLBACK (Invariato) ---
 
 def main_menu():
     markup = InlineKeyboardMarkup()
@@ -478,7 +513,7 @@ def welcome(message):
     user_data[message.chat.id] = {'extras': {'prime': False, 'lampo': False, 'choice': False, 'coupon': None, 'rapida': False}} 
     bot.send_message(message.chat.id, "🚨 *ProfitBot di Radar Offerte*\nFlusso manuale per i tuoi post.", reply_markup=main_menu(), parse_mode='Markdown')
 
-# --- GESTORE CALLBACK (LOGICA FLUSSO CRITICA) ---
+# --- GESTORE CALLBACK (LOGICA FLUSSO CRITICA - Invariato) ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     chat_id = call.message.chat.id
@@ -538,8 +573,6 @@ def callback_handler(call):
         ask_description(chat_id)
         return
         
-    # 🛑 RIMOSSO: Eliminato completamente il gestore per 'use_ia_summary'
-
     # GESTIONE PER ANDARE AVANTI (Da step_description a step_ask_extras)
     elif call.data == "finish_description_step":
         step_ask_extras(chat_id)
@@ -586,6 +619,8 @@ def callback_handler(call):
                 # RESET DELLE VARIABILI INCLUDENDO 'rapida'
                 user_data[chat_id] = {'extras': RESET_EXTRAS} 
             except Exception as e:
+                # Se il bot crasha qui, non lo possiamo notificare con handle_critical_error, 
+                # ma almeno l'utente vede l'errore a schermo.
                 bot.send_message(chat_id, f"❌ ERRORE TECNICO: {e}")
         else:
             bot.send_message(chat_id, "⚠️ Sessione scaduta.")
@@ -594,7 +629,7 @@ def callback_handler(call):
         bot.edit_message_text("❌ Annullato.", chat_id, call.message.message_id)
         bot.send_message(chat_id, "Ok, riproviamo.", reply_markup=main_menu())
 
-# --- FUNZIONI STEP ---
+# --- FUNZIONI STEP (Invariato) ---
 def get_nav_markup(step_back=None):
     markup = InlineKeyboardMarkup()
     if step_back:
@@ -657,7 +692,7 @@ def step_reviews(message):
             
     ask_description(message.chat.id) 
 
-# --- STEP DESCRIZIONE AGGIORNATO (RIMOSSA IA) ---
+# --- STEP DESCRIZIONE AGGIORNATO (RIMOSSA IA - Invariato) ---
 def ask_description(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
     # 🛑 MESSAGGIO CORRETTO: Nessun riferimento all'IA
@@ -727,7 +762,7 @@ def ask_photo(chat_id):
     msg = bot.send_message(chat_id, "6️⃣ **Invia FOTO:**", reply_markup=get_nav_markup("back_to_description"))
     bot.register_next_step_handler(msg, step_foto_process)
 
-# --- HANDLERS ---
+# --- HANDLERS (Invariato) ---
 def step_link(message):
     chat_id = message.chat.id
     if message.text and message.text.startswith('/'): return
@@ -1243,12 +1278,15 @@ def global_gatekeeper(message):
     
     bot.reply_to(message, "⛔️ **FERMO!**\nScegli cosa fare:", reply_markup=main_menu())
 
-# --- MAIN LOOP ---
+# --- MAIN LOOP AGGIORNATO (Gestione Errori) ---
 if __name__ == '__main__':
+    inizializza_db()
+    
+    # Loop infinito con gestione degli errori critici
     while True:
         try:
-            # Per far funzionare il bot in produzione, si usa infinity_polling
             bot.infinity_polling(timeout=10, long_polling_timeout=5)
         except Exception as e:
-            # In caso di errore di connessione, aspetta e riprova
-            time.sleep(2)
+            # Cattura l'errore, notifica e poi aspetta prima di riprovare
+            handle_critical_error(e) 
+            time.sleep(5) # Attende 5 secondi prima di riavviare il polling
