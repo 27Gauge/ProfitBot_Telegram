@@ -1,7 +1,0 @@
-Usa questo token per accedere all'API  HTTP:
-8311586609:AAEoedLLMQTYNKmGAYvdNphEr1693FH0oqY
-
-API Google AI Studio
-AIzaSyABejzFZgSbg8IQr3YjaS-GBP1LjFHrRTc
-
-Comando per far partire il bot in CMD : python profitbot.py 
