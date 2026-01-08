@@ -9,13 +9,17 @@ import google.generativeai as genai
 from datetime import datetime
 import urllib.parse 
 from openpyxl import Workbook, load_workbook
+from dotenv import load_dotenv # NUOVO: Import necessaria per la sicurezza
+
+# Carica le variabili d'ambiente dal file .env (deve essere nella stessa cartella)
+load_dotenv() 
 
 # --- CONFIGURAZIONE ---
-# ⚠️ 1. TOKEN TELEGRAM
-API_TOKEN = '8311586609:AAEoedLLMQTYNKmGAYvdNphEr1693FH0oqY'
+# ⚠️ 1. TOKEN TELEGRAM (RECUPERATO DA .env - NON PIÙ HARDCODED)
+API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 
-# ⚠️ 2. CHIAVE GOOGLE (Usata SOLO per recupero emoji)
-GOOGLE_API_KEY = 'AIzaSyABejzFZSbg8IQr3YjaS-GBP1LjFHrRTc'
+# ⚠️ 2. CHIAVE GOOGLE (RECUPERATA DA .env - NON PIÙ HARDCODED)
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 
 # ⚠️ 3. CANALE
 CHANNEL_ID = '@citazioneradar' 
@@ -1243,6 +1247,8 @@ def global_gatekeeper(message):
 if __name__ == '__main__':
     while True:
         try:
+            # Per far funzionare il bot in produzione, si usa infinity_polling
             bot.infinity_polling(timeout=10, long_polling_timeout=5)
         except Exception as e:
+            # In caso di errore di connessione, aspetta e riprova
             time.sleep(2)
