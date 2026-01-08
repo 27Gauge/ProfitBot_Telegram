@@ -1,0 +1,22 @@
+# Variabili di ambiente e configurazioni sensibili
+.env
+config.py
+settings.ini
+
+# Cartelle dell'ambiente virtuale (dove sono installate le librerie)
+venv/
+.venv/
+
+# Bytecode Python (file generati)
+__pycache__/
+*.pyc
+
+# Log e database locali
+*.log
+*.sqlite3 
+
+# Editor e OS files
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
