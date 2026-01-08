@@ -9,19 +9,17 @@ import google.generativeai as genai
 from datetime import datetime
 import urllib.parse 
 from openpyxl import Workbook, load_workbook
-from dotenv import load_dotenv # [NUOVO] Importa la funzione di caricamento
+from dotenv import load_dotenv # ⬅️ NUOVO: Importa la funzione di caricamento
 
 # Carica tutte le variabili dal file .env (deve essere la prima cosa)
 load_dotenv() 
 
 # --- CONFIGURAZIONE ---
 # ⚠️ 1. TOKEN TELEGRAM
-# [MODIFICATO] Lettura sicura da variabile d'ambiente
-API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') 
+API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') # ⬅️ NUOVO: Lettura sicura da .env
 
 # ⚠️ 2. CHIAVE GOOGLE (Usata SOLO per recupero emoji)
-# [MODIFICATO] Lettura sicura da variabile d'ambiente
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY') 
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY') # ⬅️ NUOVO: Lettura sicura da .env
 
 # ⚠️ 3. CANALE
 CHANNEL_ID = '@citazioneradar' 
@@ -31,7 +29,7 @@ DB_FILE = "Registro_Vendite.xlsx"
 FONT_NAME = "Montserrat-Bold.ttf"
 
 # Link Disclaimer
-LINK_INFO_POST = "https://t.me/citazioneradar/178"" 
+LINK_INFO_POST = "https://t.me/citazioneradar/178" 
 
 # --- CONFIGURAZIONE IA ---
 try:
