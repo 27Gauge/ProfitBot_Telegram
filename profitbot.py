@@ -9,20 +9,23 @@ import google.generativeai as genai
 from datetime import datetime
 import urllib.parse 
 from openpyxl import Workbook, load_workbook
-from dotenv import load_dotenv # ⬅️ NUOVO: Importa la funzione di caricamento
+from dotenv import load_dotenv
+import requests 
+from bs4 import BeautifulSoup 
+import traceback 
 
 # Carica tutte le variabili dal file .env (deve essere la prima cosa)
-load_dotenv() 
+load_dotenv()
 
 # --- CONFIGURAZIONE ---
 # ⚠️ 1. TOKEN TELEGRAM
-API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') # ⬅️ NUOVO: Lettura sicura da .env
-
+API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') 
 # ⚠️ 2. CHIAVE GOOGLE (Usata SOLO per recupero emoji)
-GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY') # ⬅️ NUOVO: Lettura sicura da .env
-
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY') 
 # ⚠️ 3. CANALE
 CHANNEL_ID = '@citazioneradar' 
+# ⚠️ 4. CHAT ID PERSONALE per notifiche critiche
+FABRIZIO_CHAT_ID = os.getenv('FABRIZIO_CHAT_ID') 
 
 AMAZON_TAG = 'radartest-21' 
 DB_FILE = "Registro_Vendite.xlsx"
@@ -30,6 +33,24 @@ FONT_NAME = "Montserrat-Bold.ttf"
 
 # Link Disclaimer
 LINK_INFO_POST = "https://t.me/citazioneradar/178" 
+
+# --- VARIABILI DI STATO GLOBALI ---
+# RIMOZIONE DI 'is_posting_open' - Non più necessaria.
+
+# --- POST GIORNALIERI (BUONGIORNO / BUONANOTTE) ---
+POST_BUONGIORNO = (
+    "☀️ **BUONGIORNO & BUON INIZIO SETTIMANA!** ☕\n\n"
+    "Il ProfitBot è attivo e pronto a scovare le migliori offerte del giorno.\n"
+    "Restate connessi sul canale per non perdere i ribassi più importanti!"
+)
+
+POST_BUONANOTTE = (
+    "🌙 **Buonanotte!** ✨\n\n"
+    "La caccia alle offerte per oggi è terminata.\n"
+    "Domattina si ricomincia, vi aspettiamo!"
+)
+# --- FINE POST GIORNALIERI ---
+
 
 # --- CONFIGURAZIONE IA ---
 try:
@@ -45,10 +66,7 @@ except Exception as e:
 
 # Verifica TOKEN
 if not API_TOKEN:
-    # Utilizziamo la gestione errori del mentor se siamo in un contesto non-terminale
     print("❌ ERRORE CRITICO: TELEGRAM_BOT_TOKEN non trovato nel file .env.")
-    # Nel caso non parta per questo motivo, lo gestiamo qui
-    # Non solleviamo un ValueError qui per permettere al ciclo di avviarsi e inviare la notifica
     pass 
 
 bot = telebot.TeleBot(API_TOKEN)
@@ -70,6 +88,7 @@ def handle_critical_error(e):
         f"{error_traceback[:1000]}..." 
         f"```"
     )
+    # Controllo che FABRIZIO_CHAT_ID sia impostato nel .env e valido
     if FABRIZIO_CHAT_ID:
         try:
             bot.send_message(FABRIZIO_CHAT_ID, message, parse_mode='Markdown')
@@ -77,7 +96,7 @@ def handle_critical_error(e):
             print(f"Impossibile inviare la notifica a {FABRIZIO_CHAT_ID}: {notify_e}")
     print(message) 
 
-# --- DATABASE (Invariato nella logica, Spostato in alto) ---
+# --- DATABASE (Invariato nella logica) ---
 def inizializza_db():
     if not os.path.exists(DB_FILE):
         try:
@@ -162,13 +181,13 @@ def sanitize_description(text):
     return cleaned_text
 
 def escape_markdown(text):
-    text = text.replace('\\', r'\\')
-    text = text.replace('*', r'\*')
-    text = text.replace('_', r'\_')
-    text = text.replace('[', r'\[')
-    text = text.replace(']', r'\]')
-    text = text.replace('(', r'\(')
-    text = text.replace(')', r'\)')
+    """
+    Rende la stringa sicura per il parsing MarkdownV2 di Telegram.
+    Sostituisce i caratteri speciali con la loro versione 'escaped'.
+    """
+    text = text.replace('\\', r'\\') # Deve essere il primo!
+    for char in ['*', '_', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+        text = text.replace(char, r'\\' + char)
     return text
 
 # --- IA E EMOJI (Invariato) ---
@@ -229,7 +248,7 @@ def get_emoji_from_ia(titolo):
         print(f"Errore IA nel recupero emoji: {e}")
         return "📦" 
 
-# --- FUNZIONE: WEB SCRAPING [NUOVO] (Invariato) ---
+# --- FUNZIONE: WEB SCRAPING ---
 def get_product_data(url):
     """Estrae titolo e prezzo corrente da un link Amazon."""
     headers = {
@@ -291,7 +310,6 @@ def get_product_data(url):
 
 # --- FUNZIONI DI RIASSUNTO E COLLAGE (Invariato) ---
 def get_riassunto_offerte():
-    # ... (Corpo funzione invariato) ...
     if not os.path.exists(DB_FILE):
         return "⚠️ Nessun record di offerte trovate nel database."
 
@@ -359,7 +377,6 @@ def get_riassunto_offerte():
         return f"❌ Errore nella lettura DB: {e}"
 
 def get_latest_image_ids():
-    # ... (Corpo funzione invariato) ...
     if not os.path.exists(DB_FILE): return []
     file_ids = []
     adesso = datetime.now()
@@ -394,7 +411,6 @@ def get_latest_image_ids():
         return []
 
 def crea_collage_riassunto():
-    # ... (Corpo funzione invariato) ...
     file_ids = get_latest_image_ids()
     
     if not file_ids:
@@ -486,13 +502,142 @@ def crea_collage_riassunto():
     bio.seek(0)
     return bio
 
-# --- MENU e GESTORE CALLBACK (Invariato) ---
+# --- GESTIONE FLUSSO PUBBLICAZIONI RIASSUNTO E STATO GLOBALE ---
+
+# Rimosse open_posts_handler e close_posts_handler
+
+def show_riassunto(chat_id, call):
+    """Genera il riassunto testuale e chiede conferma per il collage."""
+    riepilogo_txt = get_riassunto_offerte()
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(InlineKeyboardButton("📸 Crea Collage e Pubblica", callback_data="pubblica_riassunto"))
+    markup.add(InlineKeyboardButton("❌ Annulla", callback_data="reset_all"))
+    
+    bot.edit_message_text(
+        riepilogo_txt, 
+        chat_id, 
+        call.message.message_id, 
+        reply_markup=markup, 
+        parse_mode='Markdown'
+    )
+
+def pubblica_riassunto_handler(chat_id, call):
+    """Invia il collage al canale di test (chat_id) e chiede la conferma di pubblicazione."""
+    try:
+        collage_bytes = crea_collage_riassunto()
+        riepilogo_txt = get_riassunto_offerte() 
+        
+        markup_confirm = InlineKeyboardMarkup(row_width=1)
+        markup_confirm.add(InlineKeyboardButton("✅ CONFERMA PUBBLICAZIONE", callback_data="confirma_pubblica_riassunto"))
+        markup_confirm.add(InlineKeyboardButton("❌ Annulla", callback_data="reset_all"))
+        
+        # 1. Invio la foto e il riepilogo nel canale di TEST (chat_id)
+        msg_photo = bot.send_photo(chat_id, collage_bytes, caption=riepilogo_txt, parse_mode='Markdown')
+        
+        # 2. Chiedo conferma, memorizzando l'ID del messaggio della foto e della conferma
+        msg_confirm = bot.send_message(
+            chat_id, 
+            "**Anteprima creata e inviata qui sopra.**\n\n"
+            "Confermi l'invio sul canale pubblico? Dopo la pubblicazione, l'anteprima verrà *cancellata*.",
+            reply_markup=markup_confirm,
+            parse_mode='Markdown'
+        )
+        
+        # Memorizzo gli ID per la conferma e cancellazione successive
+        user_data[chat_id]['riassunto_photo_id'] = msg_photo.message_id
+        user_data[chat_id]['riassunto_confirm_id'] = msg_confirm.message_id
+
+        # Cancello il pulsante 'Crea Collage' per pulizia
+        bot.delete_message(chat_id, call.message.message_id)
+        
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ ERRORE: Impossibile creare o inviare il riassunto: {e}")
+        handle_critical_error(e)
+
+
+def confirma_pubblica_riassunto(chat_id, call):
+    """Pubblica effettivamente il riassunto sul canale pubblico e cancella l'anteprima."""
+    
+    if chat_id not in user_data or 'riassunto_photo_id' not in user_data[chat_id]:
+        bot.send_message(chat_id, "⚠️ Sessione riassunto scaduta. Riprova da Menu Principale.", reply_markup=main_menu())
+        return
+
+    try:
+        # Prendo i dati
+        photo_id_to_copy = user_data[chat_id]['riassunto_photo_id']
+        confirm_msg_id = user_data[chat_id]['riassunto_confirm_id']
+        
+        # 1. Copio il messaggio della foto dal chat_id al CHANNEL_ID
+        bot.copy_message(
+            chat_id=CHANNEL_ID, 
+            from_chat_id=chat_id, 
+            message_id=photo_id_to_copy
+        )
+        
+        # 2. Aggiorno il messaggio di conferma (il testo che contiene il bottone)
+        bot.edit_message_text(
+            "✅ **PUBBLICATO SUL CANALE!**", 
+            chat_id, 
+            confirm_msg_id, 
+            reply_markup=None, 
+            parse_mode='Markdown'
+        )
+        
+        # 3. Cancello l'anteprima della foto dal chat_id
+        bot.delete_message(chat_id, photo_id_to_copy)
+        
+        # 4. Cleanup
+        del user_data[chat_id]['riassunto_photo_id']
+        del user_data[chat_id]['riassunto_confirm_id']
+        
+        bot.send_message(chat_id, "Ottimo lavoro! Procediamo?", reply_markup=main_menu())
+        
+    except Exception as e:
+        # In caso di errore, edita il messaggio di conferma per notificare
+        bot.edit_message_text(
+            f"❌ ERRORE PUBBLICAZIONE: {e}", 
+            chat_id, 
+            call.message.message_id
+        )
+        handle_critical_error(e)
+
+# --- NUOVA FUNZIONE PER I POST GIORNALIERI ---
+
+def send_daily_post(chat_id, call, post_content, post_name):
+    """Invia un messaggio predefinito (Buongiorno/Buonanotte) al canale."""
+    try:
+        # Invio il post al canale pubblico
+        bot.send_message(CHANNEL_ID, post_content, parse_mode='Markdown')
+
+        # Aggiorno l'interfaccia nel bot per feedback
+        bot.edit_message_text(
+            f"✅ **'{post_name}' pubblicato con successo sul canale!**", 
+            chat_id, 
+            call.message.message_id, 
+            reply_markup=main_menu(), 
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        error_msg = f"❌ ERRORE: Impossibile pubblicare '{post_name}' sul canale. Controlla il CHANNEL_ID o i permessi: {e}"
+        bot.send_message(chat_id, error_msg)
+        handle_critical_error(e)
+        # Riporto il menu principale
+        bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=main_menu())
+
+
+# --- MENU e GESTORE CALLBACK ---
 def main_menu():
     markup = InlineKeyboardMarkup()
     markup.add(InlineKeyboardButton("🚀 Inizia Nuovo Post", callback_data="url_libero"))
     markup.add(InlineKeyboardButton("🗒️ Riassunto Offerte Oggi", callback_data="show_riassunto"))
-    markup.add(InlineKeyboardButton("☀️ Inizio Pubblicazioni per Oggi", callback_data="open_posts"), 
-               InlineKeyboardButton("🌙 Chiudi Pubblicazioni di Oggi", callback_data="close_posts"))
+    
+    # Pulsanti Buongiorno/Buonanotte
+    markup.add(InlineKeyboardButton("☀️ Pubblica Buongiorno", callback_data="pubblica_buongiorno"), 
+               InlineKeyboardButton("🌙 Pubblica Buonanotte", callback_data="pubblica_buonanotte"))
+               
+    # RIMOSSI i pulsanti "Inizio Pubblicazioni per Oggi" e "Chiudi Pubblicazioni di Oggi"
+    
     markup.add(InlineKeyboardButton("🏠 Menu Principale (Start)", callback_data="reset_all")) 
     return markup
 
@@ -521,7 +666,7 @@ def welcome(message):
     user_data[message.chat.id] = {'extras': {'prime': False, 'lampo': False, 'choice': False, 'coupon': None, 'rapida': False}} 
     bot.send_message(message.chat.id, "🚨 *ProfitBot di Radar Offerte*\nFlusso pronto per l'automazione.", reply_markup=main_menu(), parse_mode='Markdown')
 
-# --- GESTORE CALLBACK (LOGICA FLUSSO CRITICA) (Invariato) ---
+# --- GESTORE CALLBACK (LOGICA FLUSSO CRITICA) ---
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     chat_id = call.message.chat.id
@@ -542,29 +687,37 @@ def callback_handler(call):
         ask_link(chat_id)
         return
 
-    # Gestione riassunto, chiusura, apertura (Invariato)
-    if call.data == "show_riassunto": show_riassunto(chat_id, call); return
+    # Gestione post giornalieri
+    if call.data == "pubblica_buongiorno": 
+        send_daily_post(chat_id, call, POST_BUONGIORNO, "Buongiorno")
+        return
+    elif call.data == "pubblica_buonanotte": 
+        send_daily_post(chat_id, call, POST_BUONANOTTE, "Buonanotte")
+        return
+        
+    # Gestione riassunto
+    elif call.data == "show_riassunto": show_riassunto(chat_id, call); return
     elif call.data == "pubblica_riassunto": pubblica_riassunto_handler(chat_id, call); return
     elif call.data == "confirma_pubblica_riassunto": confirma_pubblica_riassunto(chat_id, call); return
-    elif call.data == "close_posts": close_posts_handler(chat_id, call); return
-    elif call.data == "open_posts": open_posts_handler(chat_id, call); return
+    
+    # RIMOZIONE della gestione per "close_posts" e "open_posts"
 
     # NAVIGAZIONE E CORREZIONE MANUALE (Invariato)
     elif call.data == "back_to_link": ask_link(chat_id)
     # Nel flusso automatico, i back to title/old/new sono meno usati, ma li manteniamo per il fallback
-    elif call.data == "back_to_title": ask_old_price(chat_id) # Nel fallback manuale si va al titolo, poi al vecchio prezzo
+    elif call.data == "back_to_title": ask_old_price(chat_id) 
     elif call.data == "back_to_old": ask_old_price_manuale(chat_id)
-    elif call.data == "back_to_new": ask_new_price(chat_id) 
+    elif call.data == "back_to_new": ask_new_price_manuale(chat_id) # Corretto nome funzione
     elif call.data == "back_to_reviews": ask_reviews(chat_id)
     elif call.data == "back_to_description": ask_description(chat_id)
     
     # NUOVE FUNZIONI DI CORREZIONE AUTOMATICA
     elif call.data == "correct_title_auto":
-        msg = bot.send_message(chat_id, "✍️ **Inserire il Titolo Corretto:**", reply_markup=get_nav_markup("back_to_link"))
+        msg = bot.send_message(chat_id, "✍️ **Inserire il Titolo Corretto:**", reply_markup=get_nav_markup("back_to_link"), parse_mode='Markdown')
         bot.register_next_step_handler(msg, step_correct_title)
         
     elif call.data == "correct_new_price_auto":
-        msg = bot.send_message(chat_id, "✍️ **Inserire il NUOVO Prezzo Corretto:**", reply_markup=get_nav_markup("back_to_link"))
+        msg = bot.send_message(chat_id, "✍️ **Inserire il NUOVO Prezzo Corretto:**", reply_markup=get_nav_markup("back_to_link"), parse_mode='Markdown')
         bot.register_next_step_handler(msg, step_correct_new_price)
         
     # GESTIONE EXTRA
@@ -589,7 +742,7 @@ def callback_handler(call):
         bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=get_extra_markup(chat_id))
         
     elif call.data == "set_coupon":
-        msg = bot.send_message(chat_id, "🎫 **Valore Coupon:**")
+        msg = bot.send_message(chat_id, "🎫 **Valore Coupon:**", parse_mode='Markdown')
         bot.register_next_step_handler(msg, step_coupon_input)
     elif call.data == "finish_extras":
         ask_photo(chat_id)
@@ -604,23 +757,22 @@ def callback_handler(call):
                 salva_in_excel(dati)
                 
                 msg = "✅ **PUBBLICATO!**"
-                bot.edit_message_text(msg, chat_id, call.message.message_id)
+                bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode='Markdown')
 
                 bot.send_message(chat_id, "Procediamo?", reply_markup=main_menu()) 
                 user_data[chat_id] = {'extras': RESET_EXTRAS} 
             except Exception as e:
-                bot.send_message(chat_id, f"❌ ERRORE TECNICO: {e}")
+                bot.send_message(chat_id, f"❌ ERRORE TECNICO: {e}", parse_mode='Markdown')
         else:
-            bot.send_message(chat_id, "⚠️ Sessione scaduta.")
+            bot.send_message(chat_id, "⚠️ Sessione scaduta.", parse_mode='Markdown')
 
     elif call.data == "pubblica_no":
-        bot.edit_message_text("❌ Annullato.", chat_id, call.message.message_id)
-        bot.send_message(chat_id, "Ok, riproviamo.", reply_markup=main_menu())
+        bot.edit_message_text("❌ Annullato.", chat_id, call.message.message_id, parse_mode='Markdown')
+        bot.send_message(chat_id, "Ok, riproviamo.", reply_markup=main_menu(), parse_mode='Markdown')
 
-# --- FUNZIONI STEP (Modificate per il nuovo flusso) ---
+# --- FUNZIONI STEP (Invariato) ---
 
 def get_nav_markup(step_back=None):
-    # ... (Invariato) ...
     markup = InlineKeyboardMarkup()
     if step_back:
         if step_back == "back_to_link":
@@ -641,20 +793,14 @@ def get_nav_markup(step_back=None):
 
 def ask_link(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
-    # Riferimento al nuovo step: se il link non funziona in automatico, chiediamo il titolo
-    msg = bot.send_message(chat_id, "1️⃣ **Incolla il Link Amazon:**", reply_markup=get_nav_markup(None))
+    msg = bot.send_message(chat_id, "1️⃣ **Incolla il Link Amazon:**", reply_markup=get_nav_markup(None), parse_mode='Markdown')
     bot.register_next_step_handler(msg, step_link) 
 
 # Flusso Manuale di Fallback (come prima del codice scraping)
 def ask_title(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "2️⃣ **Inserire il Titolo del Prodotto:**", reply_markup=get_nav_markup("back_to_link"))
-    bot.register_next_step_handler(msg, step_titolo_ai) # Rinomino in _ai anche se non chiama l'AI
-
-def ask_old_price(chat_id): # Flusso Manuale di Fallback: chiede il titolo prima
-    bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "2️⃣ **Inserire il Titolo del Prodotto (Manuale):**", reply_markup=get_nav_markup("back_to_link"))
-    bot.register_next_step_handler(msg, step_titolo_manuale) # Nuova funzione
+    msg = bot.send_message(chat_id, "2️⃣ **Inserire il Titolo del Prodotto:**", reply_markup=get_nav_markup("back_to_link"), parse_mode='Markdown')
+    bot.register_next_step_handler(msg, step_titolo_ai) 
 
 def step_titolo_manuale(message):
     if message.text and message.text.startswith('/'): return
@@ -666,7 +812,7 @@ def step_titolo_manuale(message):
 
 def ask_old_price_manuale(chat_id): # Flusso Manuale di Fallback: chiede il vecchio prezzo
     bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "3️⃣ **Prezzo Vecchio (es: 1499.00):**", reply_markup=get_nav_markup("back_to_link"))
+    msg = bot.send_message(chat_id, "3️⃣ **Prezzo Vecchio (es: 1499.00):**", reply_markup=get_nav_markup("back_to_link"), parse_mode='Markdown')
     bot.register_next_step_handler(msg, step_prezzo_old_manuale)
 
 def step_prezzo_old_manuale(message):
@@ -683,7 +829,7 @@ def step_prezzo_old_manuale(message):
 
 def ask_new_price_manuale(chat_id): # Flusso Manuale di Fallback: chiede il nuovo prezzo
     bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "4️⃣ **Prezzo NUOVO (es: 1019.99):**", reply_markup=get_nav_markup("back_to_old"))
+    msg = bot.send_message(chat_id, "4️⃣ **Prezzo NUOVO (es: 1019.99):**", reply_markup=get_nav_markup("back_to_old"), parse_mode='Markdown')
     bot.register_next_step_handler(msg, step_prezzo_new_manuale)
 
 def step_prezzo_new_manuale(message):
@@ -708,7 +854,7 @@ def step_prezzo_new_manuale(message):
 # Funzioni Reviews, Descrizione, Foto (Invariate)
 def ask_reviews(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "⭐ **Voto e Recensioni:**\nEs: `284 4.5`\n(Scrivi 'no' per saltare)", reply_markup=get_nav_markup("back_to_new"))
+    msg = bot.send_message(chat_id, "⭐ **Voto e Recensioni:**\nEs: `284 4.5`\n(Scrivi 'no' per saltare)", reply_markup=get_nav_markup("back_to_new"), parse_mode='Markdown')
     bot.register_next_step_handler(msg, step_reviews)
 
 def step_reviews(message):
@@ -731,7 +877,7 @@ def step_reviews(message):
     
 def ask_description(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "5️⃣ **Descrizione Prodotto/Marketing**:\n(Max 4 righe brevi. Scrivi 'no' per saltare)", reply_markup=get_nav_markup("back_to_reviews"))
+    msg = bot.send_message(chat_id, "5️⃣ **Descrizione Prodotto/Marketing**:\n(Max 4 righe brevi. Scrivi 'no' per saltare)", reply_markup=get_nav_markup("back_to_reviews"), parse_mode='Markdown')
     bot.register_next_step_handler(msg, step_description)
     
 def step_description(message):
@@ -757,7 +903,7 @@ def step_description(message):
 
 def step_ask_extras(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "🚨 **Opzioni Extra (o Invia subito la FOTO):**", reply_markup=get_extra_markup(chat_id))
+    msg = bot.send_message(chat_id, "🚨 **Opzioni Extra (o Invia subito la FOTO):**", reply_markup=get_extra_markup(chat_id), parse_mode='Markdown')
     bot.register_next_step_handler(msg, step_check_extras_photo)
 
 def step_check_extras_photo(message):
@@ -781,11 +927,10 @@ def step_coupon_input(message):
 
 def ask_photo(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
-    msg = bot.send_message(chat_id, "6️⃣ **Invia FOTO:**", reply_markup=get_nav_markup("back_to_description"))
+    msg = bot.send_message(chat_id, "6️⃣ **Invia FOTO:**", reply_markup=get_nav_markup("back_to_description"), parse_mode='Markdown')
     bot.register_next_step_handler(msg, step_foto_process)
 
 def step_foto_process(message):
-    # ... (Contenuto funzione step_foto_process invariato) ...
     if message.text and message.text.startswith('/'): return
     if not message.photo: 
         msg = bot.send_message(message.chat.id, "❌ Devi inviare la FOTO del prodotto per procedere.", reply_markup=get_nav_markup("back_to_description"))
@@ -976,10 +1121,10 @@ def step_foto_process(message):
         bot.send_message(message.chat.id, "Anteprima perfetta! Sei pronto per pubblicare sul canale?", reply_markup=conf)
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"❌ Errore: {e}")
+        bot.send_message(message.chat.id, f"❌ Errore: {e}", parse_mode='Markdown')
         handle_critical_error(e) # Invio notifica per errore grafico
 
-# --- NUOVO FLUSSO DI LAVORO CON AUTOMAZIONE ---
+# --- NUOVO FLUSSO DI LAVORO CON AUTOMAZIONE (Invariato) ---
 
 # STEP 1: step_link (MODIFICATA)
 def step_link(message):
@@ -992,7 +1137,7 @@ def step_link(message):
     link_raw = message.text
     
     if not link_raw or not "http" in link_raw:
-        bot.send_message(chat_id, "❌ Per favore, incolla un link *valido* che contenga 'http'.")
+        bot.send_message(chat_id, "❌ Per favore, incolla un link *valido* che contenga 'http'.", parse_mode='Markdown')
         ask_link(chat_id) 
         return
 
@@ -1007,7 +1152,7 @@ def step_link(message):
             link_aff = f"https://www.amazon.it/dp/{asin}?tag={AMAZON_TAG}"
             cart_link = f"https://www.amazon.it/gp/aws/cart/add.html?ASIN.1={asin}&Quantity.1=1&tag={AMAZON_TAG}"
             if is_gia_pubblicato(asin):
-                bot.send_message(chat_id, f"⚠️ ATTENZIONE: Già pubblicato oggi!")
+                bot.send_message(chat_id, f"⚠️ ATTENZIONE: Già pubblicato oggi!", parse_mode='Markdown')
         else:
             sep = "&" if "?" in link_raw else "?"
             link_aff = f"{link_raw}{sep}tag={AMAZON_TAG}"
@@ -1018,7 +1163,7 @@ def step_link(message):
         user_data[chat_id]['asin'] = asin
 
         # NUOVA LOGICA DI ESTRAZIONE DATI
-        msg_wait = bot.send_message(chat_id, "🔎 **Sto estraendo titolo e prezzo dalla pagina Amazon...**")
+        msg_wait = bot.send_message(chat_id, "🔎 **Sto estraendo titolo e prezzo dalla pagina Amazon...**", parse_mode='Markdown')
         
         scraped_data = get_product_data(link_aff)
         bot.delete_message(chat_id, msg_wait.message_id)
@@ -1033,11 +1178,11 @@ def step_link(message):
             
         else:
             # Fallback al flusso manuale
-            bot.send_message(chat_id, "⚠️ **Estrazione fallita.** Procediamo con l'inserimento manuale (Chiedo il titolo prima).")
-            ask_old_price(chat_id) # Chiama il flusso manuale che chiede TITOLO, poi VECCHIO PREZZO, poi NUOVO PREZZO
+            bot.send_message(chat_id, "⚠️ **Estrazione fallita.** Procediamo con l'inserimento manuale (Chiedo il titolo prima).", parse_mode='Markdown')
+            ask_old_price(chat_id) 
 
     except Exception as e:
-        bot.send_message(chat_id, f"❌ Errore durante l'analisi del link: {e}. Riprova.")
+        bot.send_message(chat_id, f"❌ Errore durante l'analisi del link: {e}. Riprova.", parse_mode='Markdown')
         handle_critical_error(e)
         ask_link(chat_id)
 
@@ -1049,8 +1194,8 @@ def ask_confirm_data(chat_id, titolo_estratto, prezzo_fmt):
     
     messaggio = (
         "✅ **Dati Estratti (Conferma):**\n\n"
-        f"**Titolo:** ` {titolo_estratto} `\n"
-        f"**Prezzo NUOVO:** ` {prezzo_fmt} `\n\n"
+        f"**Titolo:** `{titolo_estratto}`\n"
+        f"**Prezzo NUOVO:** `{prezzo_fmt}`\n\n"
         "2️⃣ **Inserire il PREZZO VECCHIO** (es: 1499.00 o 1.499,00) "
         "oppure usa i pulsanti per correggere."
     )
@@ -1088,7 +1233,7 @@ def step_old_price_or_correction(message):
             return
 
     # Se non è un prezzo valido, è probabile che l'utente voglia correggere qualcosa. 
-    bot.send_message(chat_id, "❌ Input non valido. Inserire solo il PREZZO VECCHIO (es. 120,50) o usare i pulsanti.")
+    bot.send_message(chat_id, "❌ Input non valido. Inserire solo il PREZZO VECCHIO (es. 120,50) o usare i pulsanti.", parse_mode='Markdown')
     # Ri-visualizziamo il messaggio di conferma per non perdere il contesto
     prezzo_fmt = format_price_euro(user_data[chat_id]['new']) + "€"
     ask_confirm_data(chat_id, user_data[chat_id]['titolo'], prezzo_fmt)
@@ -1102,8 +1247,8 @@ def step_correct_title(message):
     user_data[chat_id]['titolo'] = titolo
     
     prezzo_fmt = format_price_euro(user_data[chat_id]['new']) + "€"
-    bot.send_message(chat_id, f"✅ Titolo aggiornato: ✨ {titolo}")
-    ask_confirm_data(chat_id, titolo, prezzo_fmt)
+    bot.send_message(chat_id, f"✅ Titolo aggiornato: ✨ {titolo}", parse_mode='Markdown')
+    ask_confirm_data(chat_id, user_data[chat_id]['titolo'], prezzo_fmt)
 
 def step_correct_new_price(message):
     if message.text and message.text.startswith('/'): return
@@ -1114,11 +1259,11 @@ def step_correct_new_price(message):
     if val > 0.0:
         user_data[chat_id]['new'] = val
         prezzo_fmt = format_price_euro(val) + "€"
-        bot.send_message(chat_id, f"✅ Nuovo Prezzo aggiornato: `{prezzo_fmt}`")
+        bot.send_message(chat_id, f"✅ Nuovo Prezzo aggiornato: `{prezzo_fmt}`", parse_mode='Markdown')
         ask_confirm_data(chat_id, user_data[chat_id]['titolo'], prezzo_fmt)
     else:
-        bot.send_message(chat_id, "❌ Prezzo Nuovo non valido. Riprova.")
-        msg = bot.send_message(chat_id, "✍️ **Inserire il NUOVO Prezzo Corretto:**", reply_markup=get_nav_markup("back_to_link"))
+        bot.send_message(chat_id, "❌ Prezzo Nuovo non valido. Riprova.", parse_mode='Markdown')
+        msg = bot.send_message(chat_id, "✍️ **Inserire il NUOVO Prezzo Corretto:**", reply_markup=get_nav_markup("back_to_link"), parse_mode='Markdown')
         bot.register_next_step_handler(msg, step_correct_new_price)
 
 
@@ -1161,12 +1306,17 @@ def step_update_discount(chat_id):
 
 # --- MAIN LOOP CORRETTO ---
 if __name__ == '__main__':
-    # 🛑 CHIAMATA CORRETTA: Esegui la funzione una volta che è stata definita (più in alto)
     inizializza_db()
     
     # Loop infinito con gestione degli errori critici
     while True:
         try:
+            # Controllo token prima di avviare il polling
+            if not API_TOKEN:
+                print("Impossibile avviare il bot. Rivedere la configurazione TELEGRAM_BOT_TOKEN nel file .env.")
+                time.sleep(60) # Attendi prima di un eventuale riavvio automatico del container
+                continue
+
             bot.infinity_polling(timeout=10, long_polling_timeout=5)
         except Exception as e:
             handle_critical_error(e) 
