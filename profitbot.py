@@ -308,7 +308,7 @@ def get_product_data(url):
         return None
 # --- FINE FUNZIONE WEB SCRAPING ---
 
-# --- FUNZIONI DI RIASSUNTO E COLLAGE (Invariato) ---
+# --- FUNZIONI DI RIASSUNTO E COLLAGE ---
 def get_riassunto_offerte():
     if not os.path.exists(DB_FILE):
         return "⚠️ Nessun record di offerte trovate nel database."
@@ -320,6 +320,8 @@ def get_riassunto_offerte():
     record_oggi = {}
     
     try:
+        # ... (omissis, la logica di caricamento DB è invariata)
+
         wb = load_workbook(DB_FILE)
         ws = wb.active
         
@@ -354,6 +356,8 @@ def get_riassunto_offerte():
         for asin, dati in offerte_ordinate:
             if count >= 5: break
             titolo_pulito = dati['titolo'].split('(')[0].strip()
+            
+            # Applichiamo escape_markdown SOLO al titolo, non al link.
             titolo_pulito_sicuro = escape_markdown(titolo_pulito)
             
             riepilogo += f"🚨 **{titolo_pulito_sicuro}**\n" 
@@ -367,10 +371,18 @@ def get_riassunto_offerte():
             else:
                 short_link = dati['link'] 
 
-            riepilogo += f"🔍 {short_link}\n\n" 
+            # 💡 CORREZIONE LINK: Usiamo la sintassi [Testo](URL) in Markdown.
+            # L'URL (short_link) NON DEVE essere escaped.
+            riepilogo += f"🔍 [Link Prodotto]({short_link})\n\n" 
             count += 1
             
         riepilogo += "🔗 *Tutti i link sono affiliati.*\n"
+        
+        # ⚠️ CORREZIONE LUNGHEZZA CAPTION
+        MAX_CAPTION_LENGTH = 980 
+        if len(riepilogo) > MAX_CAPTION_LENGTH:
+             riepilogo = riepilogo[:MAX_CAPTION_LENGTH] + "\n\n[...] *Riepilogo Troncato per limite Telegram.*"
+             
         return riepilogo
         
     except Exception as e:
@@ -557,7 +569,10 @@ def pubblica_riassunto_handler(chat_id, call):
 
 
 def confirma_pubblica_riassunto(chat_id, call):
-    """Pubblica effettivamente il riassunto sul canale pubblico e cancella l'anteprima."""
+    """
+    Pubblica effettivamente il riassunto sul canale pubblico e cancella l'anteprima.
+    (Modificato per risolvere l'errore 400 'no text in the message to edit')
+    """
     
     if chat_id not in user_data or 'riassunto_photo_id' not in user_data[chat_id]:
         bot.send_message(chat_id, "⚠️ Sessione riassunto scaduta. Riprova da Menu Principale.", reply_markup=main_menu())
@@ -595,11 +610,20 @@ def confirma_pubblica_riassunto(chat_id, call):
         
     except Exception as e:
         # In caso di errore, edita il messaggio di conferma per notificare
-        bot.edit_message_text(
-            f"❌ ERRORE PUBBLICAZIONE: {e}", 
-            chat_id, 
-            call.message.message_id
-        )
+        error_msg = f"❌ ERRORE PUBBLICAZIONE: {e}"
+        try:
+             # Tentiamo di modificare il messaggio di conferma esistente
+             bot.edit_message_text(
+                 error_msg, 
+                 chat_id, 
+                 call.message.message_id, 
+                 reply_markup=main_menu()
+             )
+        except Exception as edit_e:
+             # Fallback se non riusciamo a modificare (es. se l'errore è avvenuto troppo tardi)
+             bot.send_message(chat_id, error_msg, reply_markup=main_menu())
+             print(f"Errore secondario editing: {edit_e}")
+
         handle_critical_error(e)
 
 # --- NUOVA FUNZIONE PER I POST GIORNALIERI ---
@@ -757,12 +781,14 @@ def callback_handler(call):
                 salva_in_excel(dati)
                 
                 msg = "✅ **PUBBLICATO!**"
+                # Modifichiamo il messaggio di conferma (il testo)
                 bot.edit_message_text(msg, chat_id, call.message.message_id, parse_mode='Markdown')
 
                 bot.send_message(chat_id, "Procediamo?", reply_markup=main_menu()) 
                 user_data[chat_id] = {'extras': RESET_EXTRAS} 
             except Exception as e:
                 bot.send_message(chat_id, f"❌ ERRORE TECNICO: {e}", parse_mode='Markdown')
+                handle_critical_error(e)
         else:
             bot.send_message(chat_id, "⚠️ Sessione scaduta.", parse_mode='Markdown')
 
