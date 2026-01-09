@@ -378,9 +378,10 @@ def get_riassunto_offerte():
             
         riepilogo += "🔗 *Tutti i link sono affiliati.*\n"
         
-        # ⚠️ CORREZIONE LUNGHEZZA CAPTION
+        # ⚠️ CORREZIONE LUNGHEZZA CAPTION (SINTASSI CORRETTA)
         MAX_CAPTION_LENGTH = 980 
         if len(riepilogo) > MAX_CAPTION_LENGTH:
+             # Nota il riposizionamento della virgoletta finale e l'eliminazione del \n errato.
              riepilogo = riepilogo[:MAX_CAPTION_LENGTH] + "\n\n[...] *Riepilogo Troncato per limite Telegram.*"
              
         return riepilogo
