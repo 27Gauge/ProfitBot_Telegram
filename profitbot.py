@@ -729,7 +729,7 @@ def callback_handler(call):
     # NAVIGAZIONE E CORREZIONE MANUALE (Invariato)
     elif call.data == "back_to_link": ask_link(chat_id)
     # Nel flusso automatico, i back to title/old/new sono meno usati, ma li manteniamo per il fallback
-    elif call.data == "back_to_title": ask_old_price(chat_id) 
+    elif call.data == "back_to_title": ask_title(chat_id) # CORREZIONE 1: ask_old_price -> ask_title
     elif call.data == "back_to_old": ask_old_price_manuale(chat_id)
     elif call.data == "back_to_new": ask_new_price_manuale(chat_id) # Corretto nome funzione
     elif call.data == "back_to_reviews": ask_reviews(chat_id)
@@ -826,7 +826,7 @@ def ask_link(chat_id):
 def ask_title(chat_id):
     bot.clear_step_handler_by_chat_id(chat_id)
     msg = bot.send_message(chat_id, "2️⃣ **Inserire il Titolo del Prodotto:**", reply_markup=get_nav_markup("back_to_link"), parse_mode='Markdown')
-    bot.register_next_step_handler(msg, step_titolo_ai) 
+    bot.register_next_step_handler(msg, step_titolo_manuale) # Usiamo la funzione manuale
 
 def step_titolo_manuale(message):
     if message.text and message.text.startswith('/'): return
@@ -1126,6 +1126,11 @@ def step_foto_process(message):
             f"\nℹ️ [Disclaimer & Info]({LINK_INFO_POST})"
         )
         
+        # 💡 CORREZIONE: Controllo Lunghezza Caption (Limite 1024 caratteri)
+        MAX_TELEGRAM_CAPTION = 1024
+        if len(caption) > MAX_TELEGRAM_CAPTION:
+            caption = caption[:MAX_TELEGRAM_CAPTION - 30] + "\n\n[...] *Caption Troncata*"
+        
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(InlineKeyboardButton("✅ Acquista Ora su Amazon ✅", url=dati['link']))
         markup.add(InlineKeyboardButton("🛒 Aggiungi al carrello", url=dati['cart_link']))
@@ -1205,7 +1210,9 @@ def step_link(message):
         else:
             # Fallback al flusso manuale
             bot.send_message(chat_id, "⚠️ **Estrazione fallita.** Procediamo con l'inserimento manuale (Chiedo il titolo prima).", parse_mode='Markdown')
-            ask_old_price(chat_id) 
+            
+            # 💡 CORREZIONE FLOW: Ripristino a ask_title(chat_id) che avvia la sequenza manuale
+            ask_title(chat_id) 
 
     except Exception as e:
         bot.send_message(chat_id, f"❌ Errore durante l'analisi del link: {e}. Riprova.", parse_mode='Markdown')
